@@ -52,9 +52,20 @@ def call_openai(
         from openai import OpenAI
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     """
-    # TODO: import OpenAI, create client, call chat.completions.create,
-    #       measure start/end time, return (response_text, latency)
-    raise NotImplementedError("Implement call_openai")
+    from openai import OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    start = time.time()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
+    )
+    end = time.time()
+    response_text = response.choices[0].message.content
+    latency = end - start
+    return response_text, latency
 
 
 # ---------------------------------------------------------------------------
@@ -82,8 +93,7 @@ def call_openai_mini(
     Hint:
         Reuse call_openai() by passing model=OPENAI_MINI_MODEL.
     """
-    # TODO: call call_openai with model=OPENAI_MINI_MODEL
-    raise NotImplementedError("Implement call_openai_mini")
+    return call_openai(prompt, model=OPENAI_MINI_MODEL, temperature=temperature, top_p=top_p, max_tokens=max_tokens)
 
 
 # ---------------------------------------------------------------------------
@@ -109,8 +119,26 @@ def compare_models(prompt: str) -> dict:
         Cost estimate = (len(response.split()) / 0.75) / 1000 * COST_PER_1K_OUTPUT_TOKENS["gpt-4o"]
         (0.75 words ≈ 1 token is a rough approximation)
     """
-    # TODO: call call_openai and call_openai_mini, assemble and return the dict
-    raise NotImplementedError("Implement compare_models")
+    gpt4o_response, gpt4o_latency = call_openai(prompt)
+    mini_response, mini_latency = call_openai_mini(prompt)
+    
+    def estimate_cost(response, model):
+        word_count = len(response.split())
+        token_estimate = word_count / 0.75
+        cost = (token_estimate / 1000) * COST_PER_1K_OUTPUT_TOKENS[model]
+        return cost
+    
+    gpt4o_cost = estimate_cost(gpt4o_response, "gpt-4o")
+    mini_cost = estimate_cost(mini_response, "gpt-4o-mini")
+    
+    return {
+        "gpt4o_response": gpt4o_response,
+        "mini_response": mini_response,
+        "gpt4o_latency": gpt4o_latency,
+        "mini_latency": mini_latency,
+        "gpt4o_cost_estimate": gpt4o_cost,
+        "mini_cost_estimate": mini_cost,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +162,36 @@ def streaming_chatbot() -> None:
         - After each turn, append the assistant reply to history.
         - Trim history to the last 3 turns: history = history[-3:]
     """
-    # TODO: enter while-loop, read user input, stream response, maintain history
-    raise NotImplementedError("Implement streaming_chatbot")
+    from openai import OpenAI
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    history = []
+    
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ['quit', 'exit']:
+            break
+        
+        history.append({"role": "user", "content": user_input})
+        
+        # Keep last 6 messages (3 turns)
+        history = history[-6:]
+        
+        stream = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=history,
+            stream=True,
+            temperature=0.7,
+            max_tokens=256,
+        )
+        
+        assistant_response = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            print(delta, end="", flush=True)
+            assistant_response += delta
+        
+        print()  # New line after response
+        history.append({"role": "assistant", "content": assistant_response})
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +217,17 @@ def retry_with_backoff(
     Raises:
         The last exception raised by fn() after all retries are exhausted.
     """
-    # TODO: implement retry loop with exponential backoff
-    raise NotImplementedError("Implement retry_with_backoff")
+    import time
+    attempt = 0
+    while attempt <= max_retries:
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == max_retries:
+                raise e
+            delay = base_delay * (2 ** attempt)
+            time.sleep(delay)
+            attempt += 1
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +244,12 @@ def batch_compare(prompts: list[str]) -> list[dict]:
         List of dicts, each being the compare_models result with an extra
         key "prompt" containing the original prompt string.
     """
-    # TODO: iterate over prompts, call compare_models, add "prompt" key
-    raise NotImplementedError("Implement batch_compare")
+    results = []
+    for prompt in prompts:
+        result = compare_models(prompt)
+        result["prompt"] = prompt
+        results.append(result)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +269,23 @@ def format_comparison_table(results: list[dict]) -> str:
     Hint:
         Truncate long text to 40 characters for readability.
     """
-    # TODO: build and return a formatted table string
-    raise NotImplementedError("Implement format_comparison_table")
+    def truncate(text, length=40):
+        return text[:length] + "..." if len(text) > length else text
+    
+    header = f"{'Prompt':<40} | {'GPT-4o Response':<40} | {'Mini Response':<40} | {'GPT-4o Latency':<15} | {'Mini Latency':<15}"
+    separator = "-" * len(header)
+    lines = [header, separator]
+    
+    for result in results:
+        prompt = truncate(result["prompt"])
+        gpt4o_resp = truncate(result["gpt4o_response"])
+        mini_resp = truncate(result["mini_response"])
+        gpt4o_lat = f"{result['gpt4o_latency']:.2f}"
+        mini_lat = f"{result['mini_latency']:.2f}"
+        line = f"{prompt:<40} | {gpt4o_resp:<40} | {mini_resp:<40} | {gpt4o_lat:<15} | {mini_lat:<15}"
+        lines.append(line)
+    
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
